@@ -1,101 +1,92 @@
-# Cloudflare 部署教程（eyetrack-aoi）
+# Cloudflare 部署教程（浏览器一键 + GitHub 自动发布）
 
-本教程把 AOI 创建网页部署到 Cloudflare，提供 **Pages** 和 **Workers** 两条路径。
+目标：不走命令行，直接通过 Cloudflare Dashboard 连接 GitHub 仓库完成一键部署。
 
-## 0. 前置条件
-
-- 已安装 Node.js（建议 >= 18）
-- 有 Cloudflare 账号
-- 本地已拉取本仓库
-
-安装依赖：
-
-```bash
-npm install
-```
-
-登录 Cloudflare：
-
-```bash
-npx wrangler login
-```
+仓库：`https://github.com/wannaqueen66-create/eyetrack-aoi`
 
 ---
 
-## 1. 方案 A：Cloudflare Pages（推荐）
+## 方案 1：Cloudflare Pages（推荐）
 
-适用于纯前端静态页面，简单稳定。
+最适合本项目（纯静态 AOI 网页）。
 
-### 方法 A1：CLI 直接部署
+### 步骤
 
-```bash
-npx wrangler pages deploy public --project-name eyetrack-aoi
-```
+1. 登录 Cloudflare Dashboard
+2. 进入 **Workers & Pages**
+3. 点击 **Create application** → **Pages**
+4. 选择 **Connect to Git**，授权 GitHub
+5. 选择仓库：`wannaqueen66-create/eyetrack-aoi`
+6. 构建参数填写：
+   - **Production branch**: `main`
+   - **Build command**: 留空
+   - **Build output directory**: `public`
+   - **Root directory**: 留空（仓库根目录）
+7. 点击 **Save and Deploy**
 
-如果提示项目不存在：
-1. 打开 Cloudflare Dashboard → Workers & Pages → Create application → Pages
-2. 创建项目名 `eyetrack-aoi`（不必绑定 Git）
-3. 再执行上面命令
+### 结果
 
-### 方法 A2：Git 自动部署
-
-1. 把本仓库连接到 Cloudflare Pages
-2. Build command 留空
-3. Build output directory 设为 `public`
-4. 推送到 main 分支后自动发布
-
----
-
-## 2. 方案 B：Cloudflare Workers + Assets
-
-适用于后续你想在同域下增加 API（例如 AOI 存储、用户管理、鉴权）。
-
-仓库内已提供：
-- `worker.js`: 请求转发到静态资源
-- `wrangler.toml`: assets 目录绑定到 `public`
-
-部署命令：
-
-```bash
-npx wrangler deploy
-```
-
-部署成功后访问 `workers.dev` 地址即可。
+- 首次部署完成后，获得 `https://<project>.pages.dev`
+- 后续每次 push 到 `main`，自动触发部署（真正一键、全自动）
 
 ---
 
-## 3. 验证清单
+## 方案 2：Cloudflare Workers（GitHub 驱动）
 
-部署完成后检查：
+适合后续要在同域加 API 的情况。
 
-- 页面可以打开
-- 上传背景图正常
-- 可绘制 polygon
+仓库已准备好：
+- `worker.js`
+- `wrangler.toml`（`[assets] directory = "./public"`）
+
+### 步骤
+
+1. 登录 Cloudflare Dashboard
+2. 进入 **Workers & Pages**
+3. 点击 **Create** → **Workers**
+4. 选择 **Import a repository**（GitHub）
+5. 选择仓库：`wannaqueen66-create/eyetrack-aoi`
+6. CI/CD 配置：
+   - Install command: `npm install`
+   - Deploy command: `npx wrangler deploy`
+7. 点击部署
+
+### 结果
+
+- 得到 `https://<worker-name>.<subdomain>.workers.dev`
+- 后续 push 到 `main` 自动触发发布
+
+---
+
+## 推荐选择
+
+- 只托管 AOI 网页：**Pages**
+- 计划后续加后端接口：**Workers**
+
+---
+
+## 常见坑位
+
+1. **Pages 显示 404**
+   - 通常是 Build output directory 没填 `public`
+
+2. **Workers 没有静态资源**
+   - 确认 `wrangler.toml` 存在且包含：
+     - `[assets]`
+     - `directory = "./public"`
+     - `binding = "ASSETS"`
+
+3. **GitHub 推送后没自动部署**
+   - 检查 Cloudflare 项目绑定的分支是否是 `main`
+
+---
+
+## 验收清单
+
+部署后打开网站，确认：
+- 页面能打开
+- 上传图片正常
+- 可绘制 AOI polygon
 - 可导出 `aoi.json`
 - 缩放/平移/编辑功能正常
-
----
-
-## 4. 常见问题
-
-### Q1: `wrangler` 未登录或权限错误
-重新执行：
-
-```bash
-npx wrangler login
-```
-
-### Q2: Pages 报项目不存在
-先在 Dashboard 手动创建 Pages 项目，再用 CLI 部署。
-
-### Q3: 更新后页面没变化
-- 强刷浏览器缓存（Ctrl/Cmd + Shift + R）
-- 确认部署到正确项目名
-
----
-
-## 5. 后续建议
-
-- 若仅托管 AOI 网页：长期用 **Pages**
-- 若未来增加后端接口：切 **Workers + Assets**
 

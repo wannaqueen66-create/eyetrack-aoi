@@ -3,8 +3,40 @@
 将 `eyetrack` 项目里的 AOI 创建网页（AOI Labeler v3）独立发布到 Cloudflare。
 
 支持两种方式：
-1. **Cloudflare Pages**（推荐，纯静态托管）
-2. **Cloudflare Workers + Assets**（同样可用，便于后续加 API）
+1. **Cloudflare Pages（推荐）**：浏览器里连接 GitHub 仓库，一键部署，后续 push 自动发布
+2. **Cloudflare Workers**：浏览器里创建 Worker 并关联 GitHub，自动 CI/CD 发布
+
+---
+
+## 一键式（浏览器 + GitHub）部署
+
+### A. Cloudflare Pages（最推荐）
+
+1. 打开 Cloudflare Dashboard → **Workers & Pages** → **Create application** → **Pages**
+2. 选择 **Connect to Git**，授权 GitHub
+3. 选择仓库：`wannaqueen66-create/eyetrack-aoi`
+4. 构建配置填写：
+   - **Framework preset**: None
+   - **Build command**: （留空）
+   - **Build output directory**: `public`
+5. 点击 **Save and Deploy**
+
+完成后会得到 `*.pages.dev` 地址。
+之后每次你往 `main` 分支推送，Pages 会自动重新部署。
+
+### B. Cloudflare Workers（GitHub 驱动）
+
+1. 打开 Cloudflare Dashboard → **Workers & Pages** → **Create** → **Workers**
+2. 选择 **Import a repository**（或 GitHub 集成入口）
+3. 选择仓库：`wannaqueen66-create/eyetrack-aoi`
+4. 构建命令填写：
+   - Install: `npm install`
+   - Deploy command: `npx wrangler deploy`
+5. 确认后部署
+
+仓库已内置：
+- `worker.js`
+- `wrangler.toml`（已配置 `assets` 指向 `public`）
 
 ---
 
@@ -18,50 +50,18 @@
 ├─ wrangler.toml        # Worker 配置（含 assets）
 ├─ package.json
 └─ docs/
-   └─ DEPLOY_ZH.md      # 中文部署教程（详细）
+   └─ DEPLOY_ZH.md      # 中文部署教程（含 Dashboard 一键流程）
 ```
 
 ---
 
-## 快速开始
-
-### 1) 安装依赖
+## 可选：CLI 部署（非必须）
 
 ```bash
 npm install
-```
-
-### 2) 登录 Cloudflare
-
-```bash
 npx wrangler login
+npm run deploy:pages   # 或 npm run deploy:worker
 ```
-
-### 3A) 部署到 Cloudflare Pages（推荐）
-
-```bash
-npm run deploy:pages
-```
-
-首次执行时，若项目不存在，先在 Cloudflare Dashboard 创建 Pages 项目（可空仓库），项目名建议 `eyetrack-aoi`，再执行上面的命令。
-
-### 3B) 部署到 Cloudflare Workers
-
-```bash
-npm run deploy:worker
-```
-
-部署后会得到 `https://<worker-name>.<subdomain>.workers.dev` 地址。
-
----
-
-## 本地预览
-
-```bash
-npm run dev
-```
-
-默认启动 wrangler 本地服务，可直接打开本地地址访问 AOI 页面。
 
 ---
 
@@ -72,6 +72,6 @@ npm run dev
 
 当上游 AOI 标注网页更新后，建议执行：
 1. 覆盖 `public/index.html`
-2. 本地测试
-3. 重新部署（Pages 或 Worker）
+2. 提交并推送到本仓库
+3. Cloudflare（Pages/Workers）自动触发重新部署
 

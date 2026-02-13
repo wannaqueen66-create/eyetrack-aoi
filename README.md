@@ -1,77 +1,56 @@
 # eyetrack-aoi
 
-将 `eyetrack` 项目里的 AOI 创建网页（AOI Labeler v3）独立发布到 Cloudflare。
+AOI Labeler web app extracted from `eyetrack`, deployable on Cloudflare with GitHub-based one-click flow.
 
-支持两种方式：
-1. **Cloudflare Pages（推荐）**：浏览器里连接 GitHub 仓库，一键部署，后续 push 自动发布
-2. **Cloudflare Workers**：浏览器里创建 Worker 并关联 GitHub，自动 CI/CD 发布
+从 `eyetrack` 拆分出的 AOI 标注网页，支持 Cloudflare 基于 GitHub 的一键部署。
+
+- 中文文档（完整）：[`README_zh.md`](./README_zh.md)
+- Chinese full guide: [`README_zh.md`](./README_zh.md)
 
 ---
 
-## 一键式（浏览器 + GitHub）部署
+## 1) What to upload / 上传什么文件
 
-### A. Cloudflare Pages（最推荐）
+### Required / 必选
+- **Background image** (`jpg/png`): your scene screenshot/photo used for AOI drawing.
+- **场景底图**（`jpg/png`）：用于画 AOI 的图片。
 
-1. 打开 Cloudflare Dashboard → **Workers & Pages** → **Create application** → **Pages**
-2. 选择 **Connect to Git**，授权 GitHub
-3. 选择仓库：`wannaqueen66-create/eyetrack-aoi`
-4. 构建配置填写：
-   - **Framework preset**: None
-   - **Build command**: （留空）
-   - **Build output directory**: `public`
-5. 点击 **Save and Deploy**
+### Optional / 可选
+- **Gaze CSV** with columns:
+  - `Gaze Point X[px]`
+  - `Gaze Point Y[px]`
+- This is only for visual overlay of gaze points, not required for AOI export.
+- **眼动 CSV**（包含以上两列）：仅用于叠加显示 gaze 点，不影响 AOI 导出。
 
-完成后会得到 `*.pages.dev` 地址。
-之后每次你往 `main` 分支推送，Pages 会自动重新部署。
+---
 
-### B. Cloudflare Workers（GitHub 驱动）
+## 2) One-click deploy with GitHub (Browser)
 
-1. 打开 Cloudflare Dashboard → **Workers & Pages** → **Create** → **Workers**
-2. 选择 **Import a repository**（或 GitHub 集成入口）
-3. 选择仓库：`wannaqueen66-create/eyetrack-aoi`
-4. 构建命令填写：
-   - Install: `npm install`
+### Option A: Cloudflare Pages (Recommended)
+1. Cloudflare Dashboard → Workers & Pages → Create application → Pages
+2. Connect to GitHub and choose: `wannaqueen66-create/eyetrack-aoi`
+3. Build settings:
+   - Build command: *(empty)*
+   - Output directory: `public`
+4. Save and Deploy
+
+### Option B: Cloudflare Workers (Git-driven)
+1. Dashboard → Workers & Pages → Create → Workers
+2. Import repository: `wannaqueen66-create/eyetrack-aoi`
+3. Set:
+   - Install command: `npm install`
    - Deploy command: `npx wrangler deploy`
-5. 确认后部署
-
-仓库已内置：
-- `worker.js`
-- `wrangler.toml`（已配置 `assets` 指向 `public`）
 
 ---
 
-## 目录结构
+## 3) Repo structure
 
 ```text
 .
-├─ public/
-│  └─ index.html        # AOI 标注网页（从 eyetrack/webapp/index.html 同步）
-├─ worker.js            # Worker 入口（转发静态资源）
-├─ wrangler.toml        # Worker 配置（含 assets）
-├─ package.json
-└─ docs/
-   └─ DEPLOY_ZH.md      # 中文部署教程（含 Dashboard 一键流程）
+├─ public/index.html
+├─ worker.js
+├─ wrangler.toml
+├─ docs/DEPLOY_ZH.md
+└─ README_zh.md
 ```
-
----
-
-## 可选：CLI 部署（非必须）
-
-```bash
-npm install
-npx wrangler login
-npm run deploy:pages   # 或 npm run deploy:worker
-```
-
----
-
-## 与上游 eyetrack 同步
-
-当前 `public/index.html` 来源：
-- `https://github.com/wannaqueen66-create/eyetrack` 的 `webapp/index.html`
-
-当上游 AOI 标注网页更新后，建议执行：
-1. 覆盖 `public/index.html`
-2. 提交并推送到本仓库
-3. Cloudflare（Pages/Workers）自动触发重新部署
 

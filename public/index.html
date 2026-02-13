@@ -20,7 +20,11 @@
 <div class="wrap">
   <div class="panel">
     <h2>AOI Labeler v3</h2>
+
+    <div class="item"><b>步骤1（必选）</b><br/>上传场景底图（jpg/png）</div>
     <input id="imgInput" type="file" accept="image/*" />
+
+    <div class="item"><b>步骤2（可选）</b><br/>上传眼动点 CSV（含列：<code>Gaze Point X[px]</code>、<code>Gaze Point Y[px]</code>）</div>
     <input id="csvInput" type="file" accept=".csv,text/csv" />
     <div id="csvStatus" style="font-size:12px;color:#7dffb3"></div>
 
@@ -60,6 +64,9 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const summary = document.getElementById('summary');
 const csvStatus = document.getElementById('csvStatus');
+canvas.width = 1400;
+canvas.height = 900;
+drawEmptyState();
 
 let image = new Image(), imageLoaded=false;
 let drawing=false, currentClass='', currentPoly=[];
@@ -72,6 +79,20 @@ let panMode=false, panStart=null;
 let hoverCanvasPoint=null;
 
 const view = { scale:1, tx:0, ty:0 };
+
+function drawEmptyState(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#0b1328';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.font='20px Arial';
+  ctx.fillText('请先上传场景底图（必选）', 40, 60);
+  ctx.font='14px Arial';
+  ctx.fillStyle='rgba(255,255,255,0.65)';
+  ctx.fillText('可选：再上传眼动 CSV 叠加 gaze 点。', 40, 90);
+}
+
 
 function colorForClass(name){ let h=0; for(let i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))%360; return `hsl(${h},80%,60%)`; }
 function centroid(poly){ let x=0,y=0; poly.forEach(p=>{x+=p[0];y+=p[1]}); return [x/poly.length,y/poly.length]; }
@@ -124,7 +145,7 @@ function nearestEdge(poly, wx, wy){
 }
 
 function redraw(){
-  if(!imageLoaded) return;
+  if(!imageLoaded){ drawEmptyState(); return; }
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.setTransform(view.scale,0,0,view.scale,view.tx,view.ty);
@@ -178,7 +199,7 @@ document.getElementById('csvInput').addEventListener('change', async e=>{
   const f=e.target.files[0]; if(!f) return;
   const txt=await f.text(); const lines=txt.split(/\r?\n/).filter(Boolean); if(lines.length<2) return;
   const h=lines[0].split(',').map(s=>s.trim()); const xi=h.indexOf('Gaze Point X[px]'), yi=h.indexOf('Gaze Point Y[px]');
-  if(xi<0||yi<0){csvStatus.textContent='CSV 缺少 Gaze Point X/Y'; return;}
+  if(xi<0||yi<0){csvStatus.textContent='CSV 缺少列：Gaze Point X[px] / Gaze Point Y[px]'; return;}
   gazePoints=[]; for(let i=1;i<lines.length;i++){ const c=lines[i].split(','); const x=Number((c[xi]||'').trim()), y=Number((c[yi]||'').trim()); if(Number.isFinite(x)&&Number.isFinite(y)) gazePoints.push([x,y]); }
   csvStatus.textContent=`已加载 gaze 点：${gazePoints.length}`; redraw();
 });

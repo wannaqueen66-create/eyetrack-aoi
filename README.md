@@ -4,53 +4,53 @@ AOI Labeler web app extracted from `eyetrack`, deployable on Cloudflare with Git
 
 从 `eyetrack` 拆分出的 AOI 标注网页，支持 Cloudflare 基于 GitHub 的一键部署。
 
-- 中文文档（完整）：[`README_zh.md`](./README_zh.md)
-- Chinese full guide: [`README_zh.md`](./README_zh.md)
+- 中文完整文档 / Full Chinese guide: [`README_zh.md`](./README_zh.md)
 
 ---
 
-## 1) What to upload / 上传什么文件
+## Features / 功能
+
+- Irregular polygon AOI drawing / 不规则多边形 AOI 框选
+- Multiple polygons under one class / 同类多区域
+- Import & export `aoi.json` / 导入导出 `aoi.json`
+- **Batch mode (NEW)**: 1 image + N CSV files → zip results
+- **批处理（新增）**：1 张底图 + 多个 CSV 批量产出指标压缩包
+
+---
+
+## What to upload / 上传什么文件
 
 ### Required / 必选
-- **Background image** (`jpg/png`): your scene screenshot/photo used for AOI drawing.
-- **场景底图**（`jpg/png`）：用于画 AOI 的图片。
+- Background image (`jpg/png`) / 场景底图（`jpg/png`）
 
 ### Optional / 可选
-- **Gaze CSV** with columns:
-  - `Gaze Point X[px]`
-  - `Gaze Point Y[px]`
-- This is only for visual overlay of gaze points, not required for AOI export.
-- **眼动 CSV**（包含以上两列）：仅用于叠加显示 gaze 点，不影响 AOI 导出。
+- Single CSV overlay (`Gaze Point X[px]`, `Gaze Point Y[px]`) for visualization
+- 单个 CSV 叠加显示 gaze 点（需包含上述两列）
+
+### Batch mode / 批处理
+- Select multiple CSV files in **Batch CSV input**
+- Click **Run Batch** then **Download batch_results.zip**
+
+Zip content:
+- `summary_by_class.csv`
+- `per_file/<name>_aoi_metrics_by_class.csv`
+- `per_file/<name>_aoi_metrics_by_polygon.csv`
+- `failed_files.csv` (only when parsing fails)
 
 ---
 
-## 2) One-click deploy with GitHub (Browser)
+## One-click deploy with GitHub (Browser)
 
 ### Option A: Cloudflare Pages (Recommended)
-1. Cloudflare Dashboard → Workers & Pages → Create application → Pages
-2. Connect to GitHub and choose: `wannaqueen66-create/eyetrack-aoi`
-3. Build settings:
-   - Build command: *(empty)*
-   - Output directory: `public`
-4. Save and Deploy
+1. Dashboard → Workers & Pages → Create application → Pages
+2. Connect GitHub repo: `wannaqueen66-create/eyetrack-aoi`
+3. Build command: *(empty)*
+4. Output directory: `public`
+5. Save and Deploy
 
 ### Option B: Cloudflare Workers (Git-driven)
 1. Dashboard → Workers & Pages → Create → Workers
 2. Import repository: `wannaqueen66-create/eyetrack-aoi`
-3. Set:
-   - Install command: `npm install`
-   - Deploy command: `npx wrangler deploy`
-
----
-
-## 3) Repo structure
-
-```text
-.
-├─ public/index.html
-├─ worker.js
-├─ wrangler.toml
-├─ docs/DEPLOY_ZH.md
-└─ README_zh.md
-```
+3. Install command: `npm install`
+4. Deploy command: `npx wrangler deploy`
 

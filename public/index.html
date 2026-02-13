@@ -47,6 +47,13 @@
     <button id="exportBtn">导出 aoi.json</button>
     <button id="toggleGazeBtn">开关 gaze 点</button>
 
+    <hr/>
+    <h3 style="margin:8px 0 4px;">批处理（1 张底图 + 多个 CSV）</h3>
+    <input id="batchCsvInput" type="file" accept=".csv,text/csv" multiple />
+    <button id="runBatchBtn">批量计算 AOI 指标</button>
+    <button id="downloadBatchZipBtn">下载 batch_results.zip</button>
+    <div id="batchStatus" style="font-size:12px;color:#7dffb3;line-height:1.5;margin-top:6px;"></div>
+
     <div class="hint">
       交互（v3）：<br/>
       - 滚轮缩放，空白处拖动画布平移<br/>
@@ -59,11 +66,14 @@
   <div class="canvas-wrap"><canvas id="canvas"></canvas></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script>
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const summary = document.getElementById('summary');
 const csvStatus = document.getElementById('csvStatus');
+const batchStatus = document.getElementById('batchStatus');
 canvas.width = 1400;
 canvas.height = 900;
 drawEmptyState();
@@ -72,6 +82,8 @@ let image = new Image(), imageLoaded=false;
 let drawing=false, currentClass='', currentPoly=[];
 let aois={}; // class -> [{points:[[x,y],...]}]
 let gazePoints=[], showGaze=true;
+let batchCsvFiles=[];
+let batchZipBlob=null;
 let selected=null; // {className, polyIndex}
 let dragVertex=null; // {className, polyIndex, vertexIndex}
 let dragPoly=null; // {className, polyIndex, lastX,lastY}
@@ -178,6 +190,165 @@ function redraw(){
     ctx.stroke();
     currentPoly.forEach(p=>{ctx.beginPath(); ctx.arc(p[0],p[1],3/view.scale,0,Math.PI*2); ctx.fill();});
   }
+}
+
+
+function parseCSVRows(text){
+  const out = Papa.parse(text, {header:true, skipEmptyLines:true});
+  if(out.errors && out.errors.length){
+    // keep going; Papa can still parse partial rows
+  }
+  return out.data || [];
+}
+
+function pointInPolySimple(px, py, poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i][0], yi=poly[i][1], xj=poly[j][0], yj=poly[j][1];
+    const intersect=((yi>py)!==(yj>py)) && (px < (xj-xi)*(py-yi)/((yj-yi)||1e-12)+xi);
+    if(intersect) inside=!inside;
+  }
+  return inside;
+}
+
+function toNum(v){
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function computeAoiMetricsFromRows(rows, aoisObj){
+  const classes = Object.keys(aoisObj||{});
+  const tvals = rows.map(r=>toNum(r['Recording Time Stamp[ms]'])).filter(Number.isFinite);
+  const t0 = tvals.length ? Math.min(...tvals) : NaN;
+
+  const perPolygon=[];
+  const classSamples = {}; // cls -> rows in union (approx by row index dedup)
+
+  classes.forEach(cls=>{
+    const polys = (aoisObj[cls]||[]).map(p=>p.points||p);
+    const unionHit = new Set();
+
+    polys.forEach((poly, idx)=>{
+      let samples=0;
+      let dwell=0;
+      const fixSet=new Set();
+      let minT=Infinity;
+
+      rows.forEach((r, ri)=>{
+        const x=toNum(r['Gaze Point X[px]']);
+        const y=toNum(r['Gaze Point Y[px]']);
+        if(!Number.isFinite(x)||!Number.isFinite(y)) return;
+        if(pointInPolySimple(x,y,poly)){
+          samples += 1;
+          unionHit.add(ri);
+          const fd=toNum(r['Fixation Duration[ms]']);
+          if(Number.isFinite(fd)) dwell += fd;
+          const fx=r['Fixation Index'];
+          if(fx!==undefined && fx!==null && String(fx).trim()!=='') fixSet.add(String(fx));
+          const t=toNum(r['Recording Time Stamp[ms]']);
+          if(Number.isFinite(t) && t<minT) minT=t;
+        }
+      });
+
+      perPolygon.push({
+        class_name: cls,
+        polygon_id: idx+1,
+        samples,
+        dwell_time_ms: dwell,
+        fixation_count: fixSet.size,
+        TTFF_ms: Number.isFinite(minT) && Number.isFinite(t0) ? (minT - t0) : ''
+      });
+    });
+
+    classSamples[cls] = unionHit;
+  });
+
+  const perClass=[];
+  classes.forEach(cls=>{
+    const hitIdx = classSamples[cls] || new Set();
+    let dwell=0;
+    const fixSet=new Set();
+    let minT=Infinity;
+
+    for(const ri of hitIdx){
+      const r=rows[ri];
+      const fd=toNum(r['Fixation Duration[ms]']);
+      if(Number.isFinite(fd)) dwell += fd;
+      const fx=r['Fixation Index'];
+      if(fx!==undefined && fx!==null && String(fx).trim()!=='') fixSet.add(String(fx));
+      const t=toNum(r['Recording Time Stamp[ms]']);
+      if(Number.isFinite(t) && t<minT) minT=t;
+    }
+
+    perClass.push({
+      class_name: cls,
+      polygon_count: (aoisObj[cls]||[]).length,
+      samples: hitIdx.size,
+      dwell_time_ms: dwell,
+      fixation_count: fixSet.size,
+      TTFF_ms: Number.isFinite(minT) && Number.isFinite(t0) ? (minT - t0) : ''
+    });
+  });
+
+  return {perPolygon, perClass};
+}
+
+function rowsToCSV(rows, columns){
+  const esc = (v)=>{
+    if(v===null||v===undefined) return '';
+    const s=String(v);
+    return /[",
+]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  };
+  const header = columns.join(',');
+  const body = rows.map(r=>columns.map(c=>esc(r[c])).join(','));
+  return [header, ...body].join('
+');
+}
+
+async function runBatch(){
+  if(!Object.keys(aois).length) return alert('请先完成 AOI 框选或导入 aoi.json');
+  if(!batchCsvFiles.length) return alert('请先选择多个 CSV 文件');
+
+  const allClassRows=[];
+  const zip = new JSZip();
+  const failed=[];
+
+  for(let i=0;i<batchCsvFiles.length;i++){
+    const f=batchCsvFiles[i];
+    batchStatus.textContent = `处理中 ${i+1}/${batchCsvFiles.length}: ${f.name}`;
+    try{
+      const text = await f.text();
+      const rows = parseCSVRows(text);
+      if(!rows.length) throw new Error('空CSV或解析失败');
+      const hasX = 'Gaze Point X[px]' in rows[0];
+      const hasY = 'Gaze Point Y[px]' in rows[0];
+      if(!hasX || !hasY) throw new Error('缺少 Gaze Point X[px]/Y[px] 列');
+
+      const {perPolygon, perClass} = computeAoiMetricsFromRows(rows, aois);
+      const base = f.name.replace(/\.csv$/i, '');
+
+      const classCols = ['class_name','polygon_count','samples','dwell_time_ms','fixation_count','TTFF_ms'];
+      const polyCols = ['class_name','polygon_id','samples','dwell_time_ms','fixation_count','TTFF_ms'];
+
+      zip.file(`per_file/${base}_aoi_metrics_by_class.csv`, rowsToCSV(perClass, classCols));
+      zip.file(`per_file/${base}_aoi_metrics_by_polygon.csv`, rowsToCSV(perPolygon, polyCols));
+
+      perClass.forEach(r=>allClassRows.push({...r, source_file:f.name}));
+    }catch(err){
+      failed.push({file:f.name, error:String(err.message||err)});
+    }
+  }
+
+  const summaryCols = ['source_file','class_name','polygon_count','samples','dwell_time_ms','fixation_count','TTFF_ms'];
+  zip.file('summary_by_class.csv', rowsToCSV(allClassRows, summaryCols));
+
+  if(failed.length){
+    zip.file('failed_files.csv', rowsToCSV(failed, ['file','error']));
+  }
+
+  batchZipBlob = await zip.generateAsync({type:'blob'});
+  batchStatus.textContent = `完成：成功 ${batchCsvFiles.length - failed.length}，失败 ${failed.length}。点击“下载 batch_results.zip”。`;
 }
 
 function refreshSummary(){
@@ -328,6 +499,22 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
 });
 
 document.getElementById('toggleGazeBtn').addEventListener('click', ()=>{ showGaze=!showGaze; redraw(); });
+
+document.getElementById('batchCsvInput').addEventListener('change', e=>{
+  batchCsvFiles = Array.from(e.target.files||[]);
+  batchStatus.textContent = batchCsvFiles.length ? `已选择 ${batchCsvFiles.length} 个 CSV 文件` : '';
+  batchZipBlob = null;
+});
+
+document.getElementById('runBatchBtn').addEventListener('click', runBatch);
+
+document.getElementById('downloadBatchZipBtn').addEventListener('click', ()=>{
+  if(!batchZipBlob) return alert('请先运行批处理');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(batchZipBlob);
+  a.download='batch_results.zip';
+  a.click();
+});
 
 refreshSummary();
 </script>

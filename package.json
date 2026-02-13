@@ -1,0 +1,14 @@
+{
+  "name": "eyetrack-aoi",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AOI Labeler web app deployable to Cloudflare Pages or Workers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy:worker": "wrangler deploy",
+    "deploy:pages": "wrangler pages deploy public --project-name eyetrack-aoi"
+  },
+  "devDependencies": {
+    "wrangler": "^4.31.0"
+  }
+}

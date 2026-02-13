@@ -14,6 +14,9 @@
     canvas { display:block; margin: 0 auto; background:#111; }
     .hint { font-size:12px; opacity:.88; line-height:1.45; margin-top:10px; }
     .item { background:#121a2f; border:1px solid #2c3d64; border-radius:8px; padding:8px; margin:6px 0; font-size:13px; }
+    .health { margin-top:8px; padding:8px; border-radius:8px; font-size:12px; display:none; }
+    .health.ok { display:block; background:#10311f; border:1px solid #2d8f57; color:#9df5c5; }
+    .health.err { display:block; background:#3b1111; border:1px solid #c44; color:#ffb3b3; white-space:pre-wrap; }
   </style>
 </head>
 <body>
@@ -62,10 +65,31 @@
       - 绘制时点击首点附近自动闭合
     </div>
     <div id="summary"></div>
+    <div id="healthBox" class="health"></div>
   </div>
   <div class="canvas-wrap"><canvas id="canvas"></canvas></div>
 </div>
 
+<script>
+(function(){
+  function showErr(msg){
+    var el=document.getElementById('healthBox');
+    if(!el) return;
+    el.className='health err';
+    el.style.display='block';
+    el.textContent='页面自检失败：'+msg+'
+请强制刷新（Ctrl/Cmd+Shift+R）或联系维护者。';
+  }
+  window.addEventListener('error', function(e){
+    showErr((e && (e.message||'')) || '未知脚本错误');
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var msg = e && e.reason ? (e.reason.message || String(e.reason)) : 'Promise 未处理异常';
+    showErr(msg);
+  });
+  window.__showHealthError = showErr;
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script>
@@ -74,9 +98,25 @@ const ctx = canvas.getContext('2d');
 const summary = document.getElementById('summary');
 const csvStatus = document.getElementById('csvStatus');
 const batchStatus = document.getElementById('batchStatus');
+const healthBox = document.getElementById('healthBox');
 canvas.width = 1400;
 canvas.height = 900;
 drawEmptyState();
+
+(function runtimeHealthCheck(){
+  const errs=[];
+  if(typeof Papa==='undefined') errs.push('PapaParse 加载失败（CSV 解析不可用）');
+  if(typeof JSZip==='undefined') errs.push('JSZip 加载失败（批处理打包不可用）');
+  if(errs.length){
+    if(window.__showHealthError) window.__showHealthError(errs.join('\\n'));
+  }else if(healthBox){
+    healthBox.className='health ok';
+    healthBox.style.display='block';
+    healthBox.textContent='页面自检通过：脚本加载正常';
+    setTimeout(()=>{ healthBox.style.display='none'; }, 2500);
+  }
+})();
+
 
 let image = new Image(), imageLoaded=false;
 let drawing=false, currentClass='', currentPoly=[];

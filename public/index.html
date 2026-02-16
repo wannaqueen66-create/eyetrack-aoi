@@ -8,7 +8,7 @@
     body { font-family: Arial, sans-serif; margin: 0; background: #0b1020; color: #e6eaf2; }
     .wrap { display: grid; grid-template-columns: 380px 1fr; height: 100vh; }
     .panel { padding: 14px; border-right: 1px solid #24304d; overflow: auto; }
-    input, button { width: 100%; padding: 8px; margin-top: 6px; border-radius: 8px; border: 1px solid #314268; background:#121a2f; color:#e6eaf2; }
+    input, button, select { width: 100%; padding: 8px; margin-top: 6px; border-radius: 8px; border: 1px solid #314268; background:#121a2f; color:#e6eaf2; }
     button { cursor: pointer; }
     .canvas-wrap { overflow: auto; background: #090d1a; }
     canvas { display:block; margin: 0 auto; background:#111; }
@@ -53,6 +53,10 @@
     <hr/>
     <h3 style="margin:8px 0 4px;">批处理（1 张底图 + 多个 CSV）</h3>
     <input id="batchCsvInput" type="file" accept=".csv,text/csv" multiple />
+    <select id="batchMode">
+      <option value="row">dwell_time 统计：按行累加（兼容旧版）</option>
+      <option value="fixation">dwell_time 统计：按 Fixation Index 去重聚合（推荐）</option>
+    </select>
     <button id="runBatchBtn">批量计算 AOI 指标</button>
     <button id="downloadBatchZipBtn">下载 batch_results.zip</button>
     <div id="batchStatus" style="font-size:12px;color:#7dffb3;line-height:1.5;margin-top:6px;"></div>
@@ -77,8 +81,7 @@
     if(!el) return;
     el.className='health err';
     el.style.display='block';
-    el.textContent='页面自检失败：'+msg+'
-请强制刷新（Ctrl/Cmd+Shift+R）或联系维护者。';
+    el.textContent = '页面自检失败：' + msg + '\n请强制刷新（Ctrl/Cmd+Shift+R）或联系维护者。';
   }
   window.addEventListener('error', function(e){
     showErr((e && (e.message||'')) || '未知脚本错误');
@@ -124,6 +127,7 @@ let aois={}; // class -> [{points:[[x,y],...]}]
 let gazePoints=[], showGaze=true;
 let batchCsvFiles=[];
 let batchZipBlob=null;
+let batchWorker=null;
 let selected=null; // {className, polyIndex}
 let dragVertex=null; // {className, polyIndex, vertexIndex}
 let dragPoly=null; // {className, polyIndex, lastX,lastY}
@@ -278,6 +282,8 @@ function computeAoiMetricsFromRows(rows, aoisObj){
         const x=toNum(r['Gaze Point X[px]']);
         const y=toNum(r['Gaze Point Y[px]']);
         if(!Number.isFinite(x)||!Number.isFinite(y)) return;
+        // legacy path: batch metrics computation used to run on main thread.
+        // optimized batch mode now runs in Web Worker (public/batchWorker.js).
         if(pointInPolySimple(x,y,poly)){
           samples += 1;
           unionHit.add(ri);
@@ -348,45 +354,65 @@ async function runBatch(){
   if(!Object.keys(aois).length) return alert('请先完成 AOI 框选或导入 aoi.json');
   if(!batchCsvFiles.length) return alert('请先选择多个 CSV 文件');
 
-  const allClassRows=[];
-  const zip = new JSZip();
-  const failed=[];
+  if(typeof Worker === 'undefined'){
+    return alert('当前浏览器不支持 Web Worker，无法运行批处理优化版本。');
+  }
+  if(typeof Papa==='undefined') return alert('PapaParse 加载失败，无法解析 CSV');
+  if(typeof JSZip==='undefined') return alert('JSZip 加载失败，无法打包 zip');
 
-  for(let i=0;i<batchCsvFiles.length;i++){
-    const f=batchCsvFiles[i];
-    batchStatus.textContent = `处理中 ${i+1}/${batchCsvFiles.length}: ${f.name}`;
-    try{
-      const text = await f.text();
-      const rows = parseCSVRows(text);
-      if(!rows.length) throw new Error('空CSV或解析失败');
-      const hasX = 'Gaze Point X[px]' in rows[0];
-      const hasY = 'Gaze Point Y[px]' in rows[0];
-      if(!hasX || !hasY) throw new Error('缺少 Gaze Point X[px]/Y[px] 列');
+  const modeSel = document.getElementById('batchMode');
+  const mode = modeSel ? modeSel.value : 'row';
 
-      const {perPolygon, perClass} = computeAoiMetricsFromRows(rows, aois);
-      const base = f.name.replace(/\.csv$/i, '');
+  // Read all files into memory as text (still necessary), but compute happens in worker thread.
+  batchStatus.textContent = `准备中：读取 ${batchCsvFiles.length} 个 CSV...`;
+  const files = [];
+  for (let i=0;i<batchCsvFiles.length;i++){
+    const f = batchCsvFiles[i];
+    const text = await f.text();
+    files.push({ name: f.name, text });
+  }
 
-      const classCols = ['class_name','polygon_count','samples','dwell_time_ms','fixation_count','TTFF_ms'];
-      const polyCols = ['class_name','polygon_id','samples','dwell_time_ms','fixation_count','TTFF_ms'];
+  if(batchWorker){
+    try{ batchWorker.terminate(); }catch(e){}
+    batchWorker=null;
+  }
 
-      zip.file(`per_file/${base}_aoi_metrics_by_class.csv`, rowsToCSV(perClass, classCols));
-      zip.file(`per_file/${base}_aoi_metrics_by_polygon.csv`, rowsToCSV(perPolygon, polyCols));
-
-      perClass.forEach(r=>allClassRows.push({...r, source_file:f.name}));
-    }catch(err){
-      failed.push({file:f.name, error:String(err.message||err)});
+  batchWorker = new Worker('batchWorker.js');
+  batchWorker.onmessage = (ev)=>{
+    const msg = ev.data || {};
+    if(msg.type==='progress'){
+      const p = msg.payload || {};
+      batchStatus.textContent = `处理中 ${p.index}/${p.total}: ${p.name}`;
+      return;
     }
-  }
+    if(msg.type==='error'){
+      const p = msg.payload || {};
+      batchStatus.textContent = `批处理失败：${p.message||'未知错误'}`;
+      return;
+    }
+    if(msg.type==='result'){
+      const p = msg.payload || {};
+      try{
+        const bin = atob(p.zipBase64);
+        const bytes = new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+        batchZipBlob = new Blob([bytes], {type:'application/zip'});
+        batchStatus.textContent = `完成：summary ${p.summaryCount||0} 行；失败 ${p.failedCount||0}。点击“下载 batch_results.zip”。`;
+      }catch(e){
+        batchStatus.textContent = '批处理完成但解码 zip 失败，请重试。';
+      }
+      return;
+    }
+  };
 
-  const summaryCols = ['source_file','class_name','polygon_count','samples','dwell_time_ms','fixation_count','TTFF_ms'];
-  zip.file('summary_by_class.csv', rowsToCSV(allClassRows, summaryCols));
-
-  if(failed.length){
-    zip.file('failed_files.csv', rowsToCSV(failed, ['file','error']));
-  }
-
-  batchZipBlob = await zip.generateAsync({type:'blob'});
-  batchStatus.textContent = `完成：成功 ${batchCsvFiles.length - failed.length}，失败 ${failed.length}。点击“下载 batch_results.zip”。`;
+  batchWorker.postMessage({
+    type:'run',
+    payload:{
+      aois,
+      files,
+      mode
+    }
+  });
 }
 
 function refreshSummary(){

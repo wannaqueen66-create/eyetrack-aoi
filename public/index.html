@@ -37,6 +37,9 @@
     <button id="undoPointBtn">撤销当前点</button>
     <button id="clearCurrentBtn">清空当前绘制</button>
 
+    <button id="undoBtn">撤销（Undo）</button>
+    <button id="redoBtn">重做（Redo）</button>
+
     <hr/>
     <button id="deleteSelectedBtn">删除选中 polygon</button>
     <button id="insertVertexBtn">在最近边插入顶点</button>
@@ -68,7 +71,8 @@
       - 点击 polygon 选中；拖顶点可编辑<br/>
       - 按住 Shift 拖动选中 polygon 可整体移动<br/>
       - 绘制时点击首点附近自动闭合<br/>
-      - 快捷键：Enter 闭合保存 / Esc 取消绘制 / Delete 删除选中 polygon
+      - 快捷键：Enter 闭合保存 / Esc 取消绘制 / Delete 删除选中 polygon<br/>
+      - Undo/Redo：Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Y 或 Ctrl/Cmd+Shift+Z 重做
     </div>
     <div id="summary"></div>
     <div id="healthBox" class="health"></div>
@@ -127,6 +131,49 @@ let image = new Image(), imageLoaded=false;
 let drawing=false, currentClass='', currentPoly=[];
 let aois={}; // class -> [{points:[[x,y],...]}]
 let gazePoints=[], showGaze=true;
+
+// Undo/Redo stacks: store snapshots of {aois, selected}
+const undoStack=[];
+const redoStack=[];
+const UNDO_LIMIT=80;
+
+function deepClone(obj){
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function snapshotState(){
+  return { aois: deepClone(aois), selected: selected ? deepClone(selected) : null };
+}
+
+function restoreState(state){
+  aois = deepClone(state.aois || {});
+  selected = state.selected ? deepClone(state.selected) : null;
+  refreshSummary();
+  redraw();
+}
+
+function pushUndo(reason){
+  // reason is for debugging (not shown)
+  undoStack.push(snapshotState());
+  if(undoStack.length>UNDO_LIMIT) undoStack.shift();
+  // new change invalidates redo history
+  redoStack.length = 0;
+}
+
+function doUndo(){
+  if(!undoStack.length) return;
+  redoStack.push(snapshotState());
+  const prev = undoStack.pop();
+  restoreState(prev);
+}
+
+function doRedo(){
+  if(!redoStack.length) return;
+  undoStack.push(snapshotState());
+  const next = redoStack.pop();
+  restoreState(next);
+}
+
 let batchCsvFiles=[];
 let batchZipBlob=null;
 let batchWorker=null;
@@ -539,6 +586,7 @@ canvas.addEventListener('mousedown', e=>{
     if(currentPoly.length>=3){
       const first=currentPoly[0];
       if(Math.hypot(first[0]-wx, first[1]-wy) <= 10/view.scale){
+        pushUndo('autoClosePolygon');
         if(!aois[currentClass]) aois[currentClass]=[];
         aois[currentClass].push({points: currentPoly.slice()});
         currentPoly=[]; redraw(); refreshSummary(); return;
@@ -561,11 +609,20 @@ canvas.addEventListener('mousemove', e=>{
   if(panMode && panStart){ view.tx += sx-panStart.x; view.ty += sy-panStart.y; panStart={x:sx,y:sy}; redraw(); return; }
 
   if(dragVertex){
+    // snapshot only once per drag
+    if(!dragVertex._undoPushed){
+      pushUndo('dragVertex');
+      dragVertex._undoPushed = true;
+    }
     aois[dragVertex.className][dragVertex.polyIndex].points[dragVertex.vertexIndex]=[wx,wy];
     redraw(); return;
   }
 
   if(dragPoly){
+    if(!dragPoly._undoPushed){
+      pushUndo('dragPolygon');
+      dragPoly._undoPushed = true;
+    }
     const poly=aois[dragPoly.className][dragPoly.polyIndex].points;
     const dx=wx-dragPoly.lastX, dy=wy-dragPoly.lastY;
     for(let i=0;i<poly.length;i++) poly[i]=[poly[i][0]+dx, poly[i][1]+dy];
@@ -575,7 +632,12 @@ canvas.addEventListener('mousemove', e=>{
   if(drawing) redraw();
 });
 
-window.addEventListener('mouseup', ()=>{ dragVertex=null; dragPoly=null; panMode=false; panStart=null; });
+window.addEventListener('mouseup', ()=>{
+  dragVertex=null; 
+  dragPoly=null; 
+  panMode=false; 
+  panStart=null; 
+});
 
 // Keyboard shortcuts (basic)
 window.addEventListener('keydown', (e)=>{
@@ -596,10 +658,20 @@ window.addEventListener('keydown', (e)=>{
   } else if(e.key === 'Delete' || e.key === 'Backspace'){
     if(selected){
       e.preventDefault();
+      pushUndo('deleteSelectedPolygonKey');
       aois[selected.className].splice(selected.polyIndex,1);
       if(!aois[selected.className].length) delete aois[selected.className];
       selected=null; redraw(); refreshSummary();
     }
+  } else if((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')){
+    e.preventDefault();
+    doUndo();
+  } else if((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')){
+    e.preventDefault();
+    doRedo();
+  } else if((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z')){
+    e.preventDefault();
+    doRedo();
   }
 });
 
@@ -618,13 +690,25 @@ function cancelDrawing(){
   drawing=false; currentPoly=[]; redraw();
 }
 
-document.getElementById('startPolyBtn').addEventListener('click', startDrawing);
-document.getElementById('closePolyBtn').addEventListener('click', closeAndSave);
+document.getElementById('undoBtn').addEventListener('click', doUndo);
+document.getElementById('redoBtn').addEventListener('click', doRedo);
+
+document.getElementById('startPolyBtn').addEventListener('click', ()=>{
+  // starting to draw doesn't mutate AOIs; no need to push undo
+  startDrawing();
+});
+
+document.getElementById('closePolyBtn').addEventListener('click', ()=>{
+  pushUndo('closeAndSave');
+  closeAndSave();
+});
+
 document.getElementById('undoPointBtn').addEventListener('click', ()=>{ currentPoly.pop(); redraw(); });
 document.getElementById('clearCurrentBtn').addEventListener('click', ()=>{ currentPoly=[]; redraw(); });
 
 document.getElementById('deleteSelectedBtn').addEventListener('click', ()=>{
   if(!selected) return alert('先选中一个 polygon');
+  pushUndo('deleteSelectedPolygon');
   aois[selected.className].splice(selected.polyIndex,1);
   if(!aois[selected.className].length) delete aois[selected.className];
   selected=null; redraw(); refreshSummary();
@@ -633,6 +717,7 @@ document.getElementById('deleteSelectedBtn').addEventListener('click', ()=>{
 document.getElementById('insertVertexBtn').addEventListener('click', ()=>{
   if(!selected) return alert('先选中 polygon');
   if(!hoverCanvasPoint) return alert('把鼠标移到目标边附近');
+  pushUndo('insertVertex');
   const poly=aois[selected.className][selected.polyIndex].points;
   const ne=nearestEdge(poly, hoverCanvasPoint[0], hoverCanvasPoint[1]);
   poly.splice(ne.edgeStart+1,0,[ne.x,ne.y]);
@@ -650,6 +735,7 @@ document.getElementById('deleteVertexBtn').addEventListener('click', ()=>{
     if(d<bd){bd=d; bi=i;}
   }
   if(bd>12/view.scale) return alert('离顶点太远');
+  pushUndo('deleteVertex');
   poly.splice(bi,1);
   redraw();
 });
@@ -660,12 +746,14 @@ document.getElementById('renameBtn').addEventListener('click', ()=>{
   if(!aois[oldN]) return alert('旧类不存在');
   if(!aois[newN]) aois[newN]=[];
   aois[newN]=aois[newN].concat(aois[oldN]);
+  pushUndo('renameClass');
   delete aois[oldN]; refreshSummary(); redraw();
 });
 
 document.getElementById('aoiImport').addEventListener('change', async e=>{
   const f=e.target.files[0]; if(!f) return;
   const d=JSON.parse(await f.text());
+  pushUndo('importAOI');
   aois=d.aoi_classes||{};
   for(const k of Object.keys(aois)) aois[k]=(aois[k]||[]).map(p=>({points:(p.points||p)}));
   refreshSummary(); redraw();

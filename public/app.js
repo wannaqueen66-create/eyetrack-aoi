@@ -482,7 +482,13 @@
       const ok = confirm('检测到 AOI 可能存在问题：\n\n' + warnings.slice(0, 20).join('\n') + (warnings.length>20 ? `\n...（共 ${warnings.length} 条）` : '') + '\n\n仍要导出吗？');
       if(!ok) return;
     }
-    const payload={ tool: { name: 'AOI Labeler v3', version: '3.2.0', exported_at: new Date().toISOString() }, image:{width:image.width,height:image.height}, aoi_classes:aois };
+    const imgInput = document.getElementById('imgInput');
+    const imgFile = (imgInput && imgInput.files && imgInput.files[0]) ? imgInput.files[0] : null;
+    const payload={
+      tool: { name: 'AOI Labeler v3', version: '3.2.0', exported_at: new Date().toISOString() },
+      image:{ width:image.width, height:image.height, filename: imgFile ? imgFile.name : null },
+      aoi_classes:aois
+    };
     const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='aoi.json'; a.click();
   });
